@@ -13,7 +13,9 @@ typesafe_computer_use/
                   block merging, goal-echo filter, the accessibility item
                   source, and the merge of the two
   dates.py        date parsing and "in N days" hints
-  decide.py       state, criteria, the three-Choice request, the Noul check
+  decider.py      Perplexity Decisions API client, screenshot resize, choice and noul answers
+  decide.py       state, criteria, the three-choice request, the noul check
+  supplied.py     the operator's exact text and URL; nothing is generated here
   writer.py       the writer model, structured replies, URL validation, the answer
                   with its focus or question
   openai_writer.py the writer's requests on an OpenAI-compatible endpoint
@@ -33,7 +35,7 @@ typesafe_computer_use/
   browser/        the browser backend (see [browser backend](browser-backend.md)), opt-in and independent of macos.py
     cdp.py        the only module that touches the browser        (platform adapter)
     perceive.py   DOM collection: ordered elements, click points, occlusion
-    decide.py     browser action set, two-Choice request, answer serialization
+    decide.py     browser action set, choice and noul request, answer serialization
     act.py        real Input events, observe-until-changed
     runner.py     step loop, provenance, run folder
     report.py     run folder writing and offline replay

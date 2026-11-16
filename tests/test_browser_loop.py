@@ -9,19 +9,32 @@ and the disk.
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
 
-from typesafe_sdk import Choice, ChoiceAnswer, Noul, NoulAnswer
+from PIL import Image
 
 from typesafe_computer_use.browser.decide import base_state, decide, element_criteria
 from typesafe_computer_use.browser.perceive import INTERACTIVE_JS, perceive, to_json
 from typesafe_computer_use.browser.report import RunFolder, load_step
 from typesafe_computer_use.browser.runner import run_goal, typing_target
+from typesafe_computer_use.decider import Choice, ChoiceAnswer, Noul, NoulAnswer
 
 SECRET = "hunter2-do-not-leak"
+
+
+def _pixel_png() -> str:
+    """One white pixel. The fake viewport, so a decision can carry an image without a browser."""
+    buffer = io.BytesIO()
+    Image.new("RGB", (1, 1), "white").save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+PIXEL_PNG = _pixel_png()
 
 
 def item(index, name, tag="input", **kwargs):
@@ -133,6 +146,8 @@ class FakeBrowser:
         return None
 
     def call(self, method, params=None):
+        if method == "Page.captureScreenshot":
+            return {"data": PIXEL_PNG}
         if method == "Page.navigate":
             self.navigations.append(params["url"])
         else:
@@ -155,8 +170,8 @@ class FakeTypeSafe:
         self.steps = list(steps)
         self.requests: list[dict] = []
 
-    def system_one(self, *, state, questions, model=None):
-        self.requests.append({"state": state, "questions": questions})
+    def system_one(self, *, state, questions, model=None, image=None):
+        self.requests.append({"state": state, "questions": questions, "image": image})
         if set(questions) == {"ok"}:  # verify_typed
             return SimpleNamespace(answers={"ok": NoulAnswer(noul=0.95)})
         kind, element = self.steps.pop(0) if self.steps else ("done", None)
@@ -187,7 +202,7 @@ class FakeWriter:
         return SimpleNamespace(content=[block])
 
 
-def run(browser, client, tmp_path: Path, writer=None, steps: int = 3):
+def run(browser, client, tmp_path: Path, writer=None, steps: int = 3, text=None, open_url=None):
     folder = RunFolder.create(tmp_path)
     result = run_goal(
         browser,
@@ -198,12 +213,20 @@ def run(browser, client, tmp_path: Path, writer=None, steps: int = 3):
         verbose=False,
         writer=writer,
         runfolder=folder,
+        text=text,
+        open_url=open_url,
     )
     return result, folder
 
 
 def folder_text(folder: RunFolder) -> str:
-    return "\n".join(p.read_text() for p in sorted(folder.root.iterdir()))
+    """Text artefacts only. A viewport screenshot is binary and is checked on its own."""
+    parts = []
+    for path in sorted(folder.root.iterdir()):
+        if path.suffix.lower() == ".png":
+            continue
+        parts.append(path.read_text())
+    return "\n".join(parts)
 
 
 # ------------------------------------------------------------ password values
@@ -222,6 +245,9 @@ def test_a_password_value_never_leaves_the_page(tmp_path):
     assert SECRET not in client.sent()
     assert SECRET not in folder_text(folder)
     assert SECRET not in "\n".join(s.line() for s in result.steps)
+    shots = list(folder.root.glob("*.png"))
+    assert shots, "the step sends a viewport screenshot"
+    assert all(SECRET.encode() not in path.read_bytes() for path in shots)
 
 
 def test_the_page_script_never_reads_what_was_typed():
@@ -282,6 +308,32 @@ def test_a_field_labelled_like_a_credential_is_refused_even_when_not_a_password_
     assert target is None and why == "refused_credential"
 
 
+def test_supplied_text_is_typed_exactly_and_not_checked_by_a_writer(tmp_path):
+    browser = FakeBrowser(login_page(), values={0: "  hello\n"})
+    client = FakeTypeSafe(("type_text", "0"))
+    result, _ = run(browser, client, tmp_path, text="  hello\n", steps=1)
+    assert browser.typed == ["  hello\n"]
+    assert result.steps[0].text_source == "supplied"
+    assert "text_to_type" in client.requests[0]["questions"]["kind"].criteria["type_text"]
+    assert client.requests[0]["state"]["text_to_type"] == "  hello\n"
+
+
+def test_a_supplied_url_is_opened_exactly(tmp_path):
+    browser = FakeBrowser(login_page())
+    client = FakeTypeSafe(("navigate", None))
+    result, _ = run(browser, client, tmp_path, open_url="https://example.test/exact", steps=1)
+    assert browser.navigations == ["https://example.test/exact"]
+    assert result.steps[0].text_source == "supplied"
+
+
+def test_a_supplied_url_that_is_not_https_is_not_opened(tmp_path):
+    browser = FakeBrowser(login_page())
+    client = FakeTypeSafe(("navigate", None))
+    result, _ = run(browser, client, tmp_path, open_url="http://example.test/", steps=1)
+    assert browser.navigations == []
+    assert result.steps[0].text_source == "supplied_refused"
+
+
 def test_the_writer_types_into_an_ordinary_field_and_the_step_says_so(tmp_path):
     browser = FakeBrowser(login_page(), values={0: "alice"})
     client = FakeTypeSafe(("type_text", "0"))
@@ -311,10 +363,10 @@ def test_navigate_opens_only_the_writers_https_address(tmp_path):
 
 # ---------------------------------------------------------------- decide
 def test_decide_survives_an_answer_without_a_satisfied_noul():
-    """The fallback for a missing `satisfied` answer builds a NoulAnswer the SDK accepts."""
+    """A missing `satisfied` answer becomes a noul of 0, which the loop can read."""
 
     class Partial(FakeTypeSafe):
-        def system_one(self, *, state, questions, model=None):
+        def system_one(self, *, state, questions, model=None, image=None):
             assert isinstance(questions["kind"], Choice) and isinstance(questions["satisfied"], Noul)
             return SimpleNamespace(answers={"kind": choice("wait"), "satisfied": None})
 
@@ -323,6 +375,19 @@ def test_decide_survives_an_answer_without_a_satisfied_noul():
 
 
 # ------------------------------------------------------------- page text
+def test_the_viewport_screenshot_reaches_the_decision_and_not_the_saved_state(tmp_path):
+    """The model sees pixels plus the DOM facts. The saved state stays the facts, so replay can compare it."""
+    browser = FakeBrowser(login_page())
+    client = FakeTypeSafe(("done", None))
+    _, folder = run(browser, client, tmp_path, steps=1)
+
+    image = client.requests[0]["image"]
+    assert image is not None and image.size == (1, 1)
+    saved = json.loads((folder.root / "step-01-state.json").read_text())
+    assert "screenshot" not in saved
+    assert (folder.root / "step-01-raw.png").is_file()
+
+
 def test_an_answer_that_lives_only_in_plain_text_reaches_done(tmp_path):
     """The issue's done-when: the answer is in no control's label, only in the page's
     visible text, and the run still finishes - because the text reached the classifier."""

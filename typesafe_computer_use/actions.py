@@ -6,13 +6,12 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from typesafe_sdk import TypeSafeClient
-
 from .config import SITES
 from .decide import OFFSCREEN_PREFIX, Decision, row_mates, verify_typed
+from .decider import Classifier
 from .models import Field, Guidance, Item, Missed, Popup, Screen
 from .platform_adapter import desktop
-from .writer import Writer, WriterError, compose_text, compose_url
+from .writer import Writer, WriterError, compose_text, compose_url, looks_credential, valid_url
 
 VERIFY_THRESHOLD = 0.5
 WAIT_SECONDS = 3.0  # what a wait adds to the settle delay every step already gets; three of them cover a slow page
@@ -24,11 +23,14 @@ class Context:
     goal: str
     browser: str
     email: str | None
-    typesafe: TypeSafeClient
+    decider: Classifier | None
     writer: Writer | None
     history: list[str]
-    ask: Callable[[str], str] | None = None  # puts the writer's question to the user; None when nobody is there to answer
-    guidance: Guidance = field(default_factory=Guidance)  # the runner replaces the context when the writer or the user adds to it
+    ask: Callable[[str], str] | None = None  # puts a reviewer's question to the user; None when nobody is there to answer
+    guidance: Guidance = field(default_factory=Guidance)  # replaced when a reviewer or the user adds to the goal
+    text: str | None = None  # the operator's exact text; typed unchanged, and never composed
+    submit: bool = False  # press Return after `text`, only when the operator asked for that
+    open_url: str | None = None  # the operator's exact https address for a site outside the catalog
 
 
 def perform(decision: Decision, screen: Screen, items: list[Item], ctx: Context) -> str:
@@ -139,8 +141,8 @@ def _use_browser(decision: Decision, screen, items, ctx: Context) -> str:
     """Go to the browser, and open the website the site answer named.
 
     `none` is the page already open there, so bringing the browser forward is the whole action. A
-    catalog key is its URL, and `other` is a site outside the catalog, which only the writer can
-    name. Opening a URL activates the browser too, so the three cases differ only in the page.
+    catalog key is its URL. `other` opens the operator's address when one was supplied, and otherwise
+    asks a writer only when one is attached. Opening a URL activates the browser too.
     """
     site = decision.site.choice
     if site == "none":
@@ -149,12 +151,17 @@ def _use_browser(decision: Decision, screen, items, ctx: Context) -> str:
         return f"use_browser failed: {ctx.browser} did not come to the front"
     url = SITES.get(site)
     if url is None:
-        if ctx.writer is None:
-            return "use_browser refused: the site is outside the catalog and no writer is available to propose a URL"
-        try:
-            url = compose_url(ctx.writer, ctx.goal, ctx.history, ctx.guidance)
-        except WriterError as e:
-            return f"use_browser refused: the writer failed ({e})"
+        if ctx.open_url is not None:
+            if not valid_url(ctx.open_url):
+                return "use_browser refused: the supplied address is not an https URL"
+            url = ctx.open_url
+        elif ctx.writer is None:
+            return "use_browser refused: the site is outside the catalog and no URL was supplied"
+        else:
+            try:
+                url = compose_url(ctx.writer, ctx.goal, ctx.history, ctx.guidance)
+            except WriterError as e:
+                return f"use_browser refused: the writer failed ({e})"
     if not url:
         return "use_browser refused: the writer proposed no usable URL for this goal"
     if desktop.open_url(ctx.browser, url):
@@ -170,16 +177,23 @@ def _type_email(decision, screen: Screen, items, ctx: Context) -> str:
 
 
 def _type_text(decision, screen: Screen, items, ctx: Context) -> str:
-    """Fill the focused field with the writer's text, and check it, or submit it with Return.
+    """Fill the focused field. The operator's text is typed unchanged.
 
-    Text the writer submits is not checked: Return usually takes the field away (a dialog closes, a
-    search runs), so a read after it no longer shows the field, and a read before it would split
-    the keystrokes and the Return into two OSWorld steps. The next screen says whether it took.
+    A writer, when one is attached and the operator supplied no text, may still compose it.
+    Text that is submitted with Return is not checked: Return usually takes the field away.
     """
     if not (screen.field and screen.field.is_text):
         return "type_text refused: no text field is focused"
+    if looks_credential(screen.field.label) or looks_credential(screen.field.placeholder):
+        return "type_text refused: a credential field is not filled"
+    if ctx.text is not None:
+        how = fill_field(screen.field, ctx.text)
+        if ctx.submit:
+            desktop.press("return")
+            return f"typed {ctx.text!r} into {screen.field.label!r} {how} and pressed Return"
+        return f"typed {ctx.text!r} into {screen.field.label!r} {how}"
     if ctx.writer is None:
-        return "type_text refused: no writer available"
+        return "type_text refused: no text was supplied"
     try:
         fill = compose_text(ctx.writer, ctx.goal, screen, items, ctx.history, ctx.guidance)
     except WriterError as e:
@@ -192,7 +206,7 @@ def _type_text(decision, screen: Screen, items, ctx: Context) -> str:
         desktop.press("return")
         return f"typed {text!r} into {screen.field.label!r} {how} and pressed Return"
     time.sleep(0.3)
-    p = verify_typed(ctx.typesafe, ctx.goal, screen.field, text, desktop.focused_field())
+    p = verify_typed(ctx.decider, ctx.goal, screen.field, text, desktop.focused_field())
     if p < VERIFY_THRESHOLD:
         recovery = "restored previous value" if restore_field(screen.field, text) else "could not safely restore previous value"
         return f"typed {text!r} into {screen.field.label!r} {how} but verification failed ({p:.2f}); {recovery}"

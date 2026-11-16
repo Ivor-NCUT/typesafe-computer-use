@@ -86,6 +86,19 @@ def test_site_criteria_covers_the_catalog_a_site_outside_it_and_no_site():
     assert "already open" in crit["none"]
 
 
+def test_type_text_is_offered_only_when_there_is_text_to_type():
+    assert "type_text" not in kind_criteria("Google Chrome", None, can_type=False)
+    supplied = kind_criteria("Google Chrome", None, supplied=True)
+    assert "text_to_type" in supplied["type_text"] and "Do not change" in supplied["type_text"]
+
+
+def test_supplied_text_is_a_fact_in_the_state(screen, make_item):
+    state = base_state("buy the thing", screen, [make_item(0, "Buy")], [], text="  hello\n", open_url="https://example.com/a")
+    assert state["text_to_type"] == "  hello\n"
+    assert state["url_to_open"] == "https://example.com/a"
+    assert "text_to_type" not in base_state("buy the thing", screen, [make_item(0, "Buy")], [])
+
+
 def test_kind_criteria_offers_email_only_when_set():
     assert "type_email" not in kind_criteria("Google Chrome", None)
     assert "type_email" in kind_criteria("Google Chrome", "user@example.com")
@@ -154,8 +167,9 @@ def test_the_item_question_steers_around_what_was_tried_here_as_the_kind_questio
     kind question was told to steer around that list, and the item question chose Bing every time."""
     asked = []
 
-    def system_one(state, questions):
+    def system_one(state, questions, image=None):
         asked.append(questions)
+        assert image is screen.image
         return SimpleNamespace(answers={"kind": answer("click_item", 0.9), "item": answer("1", 0.9), "site": answer("none", 1.0)})
 
     items = [make_item(0, "Microsoft Bing"), make_item(1, "Set as default", y1=200, y2=230)]

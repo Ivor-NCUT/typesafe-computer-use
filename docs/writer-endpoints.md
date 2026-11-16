@@ -1,8 +1,13 @@
 # Writer endpoints
 
-The writer types text, proposes URLs, and reads the screen whenever the classifier stops. By
-default it is Claude on `api.anthropic.com`. These variables change the model or send it to
-another endpoint.
+`clicker` does not call a writer. Text to type is `--text`, `--text-file`, or `CLICKER_TEXT`.
+An address outside the site catalog is `--open-url` or `CLICKER_OPEN_URL`. A stop ends the run.
+No request is sent to Anthropic, DeepSeek, or any other writing model, even if a key is set
+in the environment.
+
+The settings below are only for the optional OSWorld comparison agent, which attaches a writer
+when `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or `CLICKER_WRITER_BASE_URL` is set. With none
+of those set, that agent does not construct a client and does not call an answer model.
 
 | variable | required | purpose |
 |---|---|---|

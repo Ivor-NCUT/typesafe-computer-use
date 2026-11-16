@@ -1,8 +1,9 @@
-"""The classifier's request on a real OSWorld step: what it sent, and what it sends now.
+"""The classifier's facts on a real OSWorld step: what used to be sent, and what is sent now.
 
-TypeSafe bills every input token and caches none, so the request's size is the step's cost. The
-fixture is Chrome's settings page as one step's payload file recorded it: the state and the item
-criteria that went out, and every item with its box. The items make up most of both, and the
+The decision model bills input tokens, so the facts' size is most of a step's text cost. The
+screenshot is attached separately and sized by the tile limit; it is not part of this payload.
+The fixture is Chrome's settings page as one step's payload file recorded it: the state and the
+item criteria that went out, and every item with its box. The items make up most of both, and the
 rest of the request, the other questions and their instructions, is the same for every step.
 The merge that built those items is gone with the capture, so the test drops what the merge now
 drops, `is_icon` over the plain OCR items, and renders the rest as a step does.

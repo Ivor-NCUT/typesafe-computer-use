@@ -1,14 +1,19 @@
-"""The TypeSafe side: state, criteria, and the one multi-Choice request."""
+"""State, criteria, and the one multi-question decision request.
+
+The questions are still split — kind, item, site, and off-screen when there is
+any — so screen noise cannot leak into the action. The client is Perplexity's
+Decisions API (`decider.py`): each question is a `choice`, and the screenshot
+goes out with the facts.
+"""
 
 from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
 
-from typesafe_sdk import Choice, ChoiceAnswer, Noul, TypeSafeClient
-
 from .config import SITES
 from .dates import date_hints, now_context
+from .decider import Choice, ChoiceAnswer, Classifier, Noul
 from .models import AxNode, Field, Guidance, Item, Screen
 
 STOP_KINDS = ("done", "none")
@@ -26,7 +31,17 @@ FOCUS_RULE = (
 )
 
 
-def fixed_actions(browser: str, email: str | None) -> dict[str, str]:
+SUPPLIED_TYPE = (
+    "Type the operator's exact text, given as text_to_type, into the focused text field. "
+    "Do not change that text. Only valid when a text field is focused and needs it."
+)
+WRITER_TYPE = (
+    "Type free text into the focused text field. A writing model composes the text from the "
+    "goal and the field's label. Only valid when a text field is focused and needs content."
+)
+
+
+def fixed_actions(browser: str, email: str | None, *, can_type: bool = True, supplied: bool = False) -> dict[str, str]:
     """Deterministic actions offered alongside click_item. Keep them mutually exclusive."""
     actions = {
         "use_browser": (
@@ -35,22 +50,24 @@ def fixed_actions(browser: str, email: str | None) -> dict[str, str]:
             "continue with. This is the only way to reach a website: never click the address bar, a URL, "
             "or a search box to get there. Works from any app, including this one."
         ),
-        "type_text": (
-            "Type free text into the focused text field. A writing model composes the text from the "
-            "goal and the field's label. Only valid when a text field is focused and needs content."
-        ),
-        "press_enter": "Press Return to submit the focused form or field.",
-        "press_escape": "Press Escape to dismiss a dialog, menu, or popup.",
-        "go_back": (
-            "Go back to the previous page or screen, as the browser's Back button does. Use when the last "
-            "click led somewhere that does not help and the page before it did."
-        ),
-        "scroll_down": "Scroll down to reveal more of the page.",
-        "scroll_up": "Scroll up.",
-        "wait": "Nothing to do yet; the screen is still loading or changing.",
-        "done": "The goal is already achieved.",
-        "none": "Nothing on screen or in this list helps with the goal.",
     }
+    if can_type:
+        actions["type_text"] = SUPPLIED_TYPE if supplied else WRITER_TYPE
+    actions.update(
+        {
+            "press_enter": "Press Return to submit the focused form or field.",
+            "press_escape": "Press Escape to dismiss a dialog, menu, or popup.",
+            "go_back": (
+                "Go back to the previous page or screen, as the browser's Back button does. Use when the last "
+                "click led somewhere that does not help and the page before it did."
+            ),
+            "scroll_down": "Scroll down to reveal more of the page.",
+            "scroll_up": "Scroll up.",
+            "wait": "Nothing to do yet; the screen is still loading or changing.",
+            "done": "The goal is already achieved.",
+            "none": "Nothing on screen or in this list helps with the goal.",
+        }
+    )
     if email:
         actions["type_email"] = (
             "Type the user's email address into the focused text field. Use this, not type_text, "
@@ -59,11 +76,13 @@ def fixed_actions(browser: str, email: str | None) -> dict[str, str]:
     return actions
 
 
-def kind_criteria(browser: str, email: str | None, offscreen: bool = False) -> dict[str, str]:
+def kind_criteria(
+    browser: str, email: str | None, offscreen: bool = False, *, can_type: bool = True, supplied: bool = False
+) -> dict[str, str]:
     clicks = {"click_item": "Click one of the on-screen text items (chosen in the item question)."}
     if offscreen:
         clicks["press_offscreen"] = PRESS_OFFSCREEN
-    return {**clicks, **fixed_actions(browser, email)}
+    return {**clicks, **fixed_actions(browser, email, can_type=can_type, supplied=supplied)}
 
 
 ROW_MATES = 3  # how many neighbours name a duplicated item's row in a criterion; the history line takes them all
@@ -131,10 +150,14 @@ def base_state(
     history: list[str],
     tried: list[str] | None = None,
     guidance: Guidance | None = None,
+    *,
+    text: str | None = None,
+    open_url: str | None = None,
 ) -> dict:
     """The facts the classifier reads. `tried` lists the actions already taken on this same screen
     earlier in the run, each of which led back here: a fact the code knows and the model cannot.
-    `guidance` is what the writer and the user added to the goal when the classifier last stopped."""
+    `guidance` is what a reviewer and the user added to the goal when the classifier last stopped.
+    `text` and `open_url` are the operator's exact string and address, when they supplied one."""
     hints = date_hints(items, screen)
     mates = row_mates(items)
     return {
@@ -159,6 +182,8 @@ def base_state(
             for it in items
         ],
         **({"offscreen_controls": offscreen_records(screen.offscreen)} if screen.offscreen else {}),
+        **({"text_to_type": text} if text is not None else {}),
+        **({"url_to_open": open_url} if open_url is not None else {}),
     }
 
 
@@ -168,6 +193,7 @@ class Decision:
     item: ChoiceAnswer | None
     site: ChoiceAnswer
     offscreen: ChoiceAnswer | None = None
+    request_id: str | None = None
 
     @property
     def clicking(self) -> bool:
@@ -203,7 +229,7 @@ class Decision:
 
 
 def decide(
-    client: TypeSafeClient,
+    client: Classifier,
     goal: str,
     screen: Screen,
     items: list[Item],
@@ -212,7 +238,12 @@ def decide(
     email: str | None,
     tried: list[str] | None = None,
     guidance: Guidance | None = None,
+    *,
+    can_type: bool = True,
+    supplied_text: str | None = None,
+    open_url: str | None = None,
 ) -> Decision:
+    typing = can_type or supplied_text is not None
     questions = {
         "kind": Choice(
             instructions=(
@@ -222,7 +253,7 @@ def decide(
                 "tried on this screen: each of those led straight back here."
                 + (FOCUS_RULE if guidance and guidance.focus else "")
             ),
-            criteria=kind_criteria(browser, email, bool(screen.offscreen)),
+            criteria=kind_criteria(browser, email, bool(screen.offscreen), can_type=typing, supplied=supplied_text is not None),
         ),
         "site": Choice(
             instructions=(
@@ -252,11 +283,22 @@ def decide(
             ),
             criteria=offscreen_criteria(screen.offscreen),
         )
-    answers = client.system_one(state=base_state(goal, screen, items, history, tried, guidance), questions=questions).answers
-    return Decision(kind=answers["kind"], item=answers.get("item"), site=answers["site"], offscreen=answers.get("offscreen"))
+    response = client.system_one(
+        state=base_state(goal, screen, items, history, tried, guidance, text=supplied_text, open_url=open_url),
+        questions=questions,
+        image=screen.image,
+    )
+    answers = response.answers
+    return Decision(
+        kind=answers["kind"],
+        item=answers.get("item"),
+        site=answers["site"],
+        offscreen=answers.get("offscreen"),
+        request_id=getattr(response, "request_id", None),
+    )
 
 
-def verify_typed(client: TypeSafeClient, goal: str, field_before: Field, typed: str, field_after: Field | None) -> float:
+def verify_typed(client: Classifier, goal: str, field_before: Field, typed: str, field_after: Field | None) -> float:
     """Probability that the field now holds a sensible value for its purpose."""
     state = {
         "goal": goal,

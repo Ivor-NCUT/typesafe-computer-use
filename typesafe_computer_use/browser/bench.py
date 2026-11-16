@@ -7,8 +7,8 @@
 `perception` is the headline: the same page, the same machine, the same moment.
 One path reads the DOM over CDP. The other does what the original does —
 `Page.captureScreenshot` -> Apple Vision OCR -> merge blocks -> reading order.
-The TypeSafe decision that follows is identical in both, so the difference is
-purely perception.
+The decision that follows is the same Decisions API request in both, so the
+difference is purely perception.
 
 `loop` runs the full end-to-end step loop and reports per-stage latency.
 """
@@ -25,10 +25,9 @@ import sys
 import time
 from pathlib import Path
 
-from typesafe_sdk import TypeSafeClient
-
 from .. import config
-from ..writer import make_writer, provider
+from ..decider import PerplexityDecider
+from ..supplied import SuppliedError, supplied_text, supplied_url
 from . import act
 from .cdp import Chrome
 from .decide import decide
@@ -177,19 +176,24 @@ def benchmark_loop(args: argparse.Namespace) -> int:
 
     _require_key()
     try:
-        writer = make_writer()
-    except ValueError as e:
+        text = supplied_text(args.text, args.text_file)
+        open_url = supplied_url(args.open_url)
+    except SuppliedError as e:
         sys.exit(str(e))
-    if writer is None:
-        print("writer disabled: no ANTHROPIC_API_KEY or CLICKER_WRITER_BASE_URL; type_text and navigate need one")
+    if text is None:
+        print("no text supplied: type_text is not offered (pass --text or --text-file)")
     else:
-        print(f"writer: {provider(writer)}")
+        print(f"text supplied ({len(text)} characters)")
+    if open_url is None:
+        print("no URL supplied: navigate is not offered")
+    else:
+        print("open URL supplied")
 
     runfolder = RunFolder.create(args.runs) if args.runs else None
     if runfolder is not None:
         print(f"run folder: {runfolder.root}")
 
-    with Chrome(headed=args.headed) as chrome, chrome.attach() as session, TypeSafeClient() as client:
+    with Chrome(headed=args.headed) as chrome, chrome.attach() as session, PerplexityDecider() as client:
         print(f"goal: {goal}\nurl:  {url}\n")
         print(f"{'#':>3}  {'action':<12} {'detail':<40} {'conf':<9} {'perceive':>8}  {'decide':>8}  {'act':>8}  {'total':>9}")
         print("-" * 118)
@@ -201,8 +205,10 @@ def benchmark_loop(args: argparse.Namespace) -> int:
             max_steps=args.steps,
             min_confidence=args.min_confidence,
             model=args.model,
-            writer=writer,
+            writer=None,
             runfolder=runfolder,
+            text=text,
+            open_url=open_url,
         )
 
     s = result.summary()
@@ -241,9 +247,16 @@ def cmd_replay(args: argparse.Namespace) -> int:
     print(f"      {len(page.items)} elements, scroll_y={page.scroll_y}, {page.below_fold} below the fold")
     print(f"      history: {len(step['history'])} prior action(s)\n")
 
-    with TypeSafeClient() as client:
+    shot = Path(args.run) / f"step-{args.step:02d}-raw.png"
+    image = None
+    if shot.is_file():
+        from PIL import Image
+
+        image = Image.open(shot).convert("RGB")
+    with PerplexityDecider() as client:
         # Mirror the runner exactly: the history is part of the state that was sent, and
-        # whether a writer was there decides the action set offered.
+        # whether a writer was there decides the action set offered. The saved viewport,
+        # when the step wrote one, goes with the facts the way the live step sent it.
         decision = decide(
             client,
             step["goal"],
@@ -251,6 +264,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             history=step["history"],
             can_write=step["can_write"],
             model=args.model,
+            image=image,
         )
 
     if step["state"] and decision.state != step["state"]:
@@ -272,9 +286,9 @@ DOTENV = Path.cwd() / ".env"
 
 
 def _require_key() -> None:
-    """The TypeSafe key, resolved the way `clicker` resolves it: the environment, then ./.env."""
-    if not os.environ.get("TYPESAFE_API_KEY"):
-        sys.exit("TYPESAFE_API_KEY is not set (export it or put it in .env)")
+    """The Perplexity key, resolved the way `clicker` resolves it: the environment, then ./.env."""
+    if not os.environ.get("PERPLEXITY_API_KEY"):
+        sys.exit("PERPLEXITY_API_KEY is not set (export it or put it in .env)")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -312,6 +326,9 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--steps", type=int, default=10)
     q.add_argument("--min-confidence", type=float, default=0.4)
     q.add_argument("--model", default=None)
+    q.add_argument("--text", default=None, help="exact text for type_text")
+    q.add_argument("--text-file", type=Path, default=None, help="UTF-8 file typed exactly")
+    q.add_argument("--open-url", default=None, help="exact https URL for navigate")
     q.add_argument("--headed", action="store_true")
     q.add_argument("--out", default=None)
     q.add_argument("--runs", default=None, help="write a replayable run folder under this directory")

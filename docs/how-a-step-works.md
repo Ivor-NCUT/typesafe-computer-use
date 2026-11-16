@@ -1,7 +1,8 @@
 # How a step works
 
-A step reads the screen, adds the facts code can decide, asks TypeSafe one question in three
-parts, and acts. This page follows it from the capture to the stop that ends a run.
+A step reads the screen, adds the facts code can decide, asks Perplexity's Decisions API
+one question in three parts, and acts. The screenshot goes with those facts. This page
+follows a step from the capture to the stop that ends a run.
 
 ```
 screencapture ─► Vision OCR ─► merge lines into blocks ─► drop lines echoing the goal
@@ -19,7 +20,8 @@ layout        ─► "in the row of ..." on any label that appears more than onc
 runner.py     ─► the actions already tried on this same screen, each of which led back here
                      │
                      ▼
-        one TypeSafe request, three Choices, four with off-screen controls
+        one Decisions API request, three choice questions, four with off-screen controls
+        the screenshot is state.screenshot, a PNG data URL resized under 2048 tiles
         ┌────────────────────────────────────────────────────────────┐
         │ kind      : click_item | use_browser | type_text | scroll… │
         │ item      : which item (used only for click_item)          │
@@ -129,8 +131,8 @@ on the app, and the node and time caps bind first on a big tree: Notes and Chrom
 |---|---|
 | `click_item` | press the element through the accessibility tree when the item came from it, so the press lands on the control rather than on whatever covers it; a mouse click at the center of the box otherwise, and as the fallback when the press is refused, after closing the popup in front of it when there is one |
 | `press_offscreen` | `AXPress` a labelled control the app exposes but does not show, chosen from the off-screen list; offered only when that list is not empty, and a refusal counts as a no-op since there is no pixel to fall back on |
-| `use_browser` | go to the browser, showing the website the `site` answer names: `none` brings it forward on the page already open there, a `SITES` catalog key opens that URL through AppleScript `open location`, and `other` opens a URL the writer proposes |
-| `type_text` | the writer composes the string; it is set on the focused element through the accessibility tree, with keystrokes as the fallback when the value does not read back, and a TypeSafe Noul then checks the field's value; text the writer submits gets Return at once instead, and the next screen is the check |
+| `use_browser` | go to the browser, showing the website the `site` answer names: `none` brings it forward on the page already open there, a `SITES` catalog key opens that URL through AppleScript `open location`, and `other` opens the operator's `--open-url` when it is an https URL |
+| `type_text` | types the operator's exact text (`--text`, `--text-file`, or `CLICKER_TEXT`) into the focused field, unchanged; `--submit` presses Return after it. Offered only when that text was supplied. A credential field is refused |
 | `type_email` | fills in `$CLICKER_EMAIL` the same way; refused unless a text field is focused |
 | `press_enter`, `press_escape` | keyboard |
 | `go_back` | Cmd-[, the browser's Back, when the last click led somewhere unhelpful |
@@ -140,7 +142,12 @@ on the app, and the node and time caps bind first on a big tree: Notes and Chrom
 
 ## Where free text comes from
 
-The classifier never generates text. The writer model runs in three places, each with a
+The classifier never generates text. `clicker` types the operator's exact text and opens
+the operator's exact https URL. It does not call a writer, and a stop does not ask a model
+to read the screen.
+
+A writer can still be attached by the OSWorld comparison agent, and only when a writer key
+or `CLICKER_WRITER_BASE_URL` is set. In that case it runs in three places, each with a
 small packet and a structured reply. Each packet also carries the current focus and what
 the user said, once there are any:
 

@@ -1,4 +1,4 @@
-"""The TypeSafe side of the browser backend: one request, three questions.
+"""The decision side of the browser backend: one request, three questions.
 
 Same discipline as the original — split the decision so screen noise cannot leak
 into the action choice — but the option sets are browser-only, so they are
@@ -11,8 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from typesafe_sdk import Choice, ChoiceAnswer, Noul, NoulAnswer, ScoreAnswer, TypeSafeClient
-
+from ..decider import Choice, ChoiceAnswer, Classifier, Noul, NoulAnswer, ScoreAnswer
 from .perceive import Page
 
 STOP_KINDS = ("done", "none")
@@ -52,6 +51,7 @@ class Decision:
     state: dict = field(default_factory=dict)
     questions: dict = field(default_factory=dict)
     answers: dict = field(default_factory=dict)
+    request_id: str | None = None
 
     @property
     def clicking(self) -> bool:
@@ -81,7 +81,9 @@ def element_criteria(page: Page) -> dict[str, str]:
     return {str(it.index): it.label() for it in page.items}
 
 
-def available_actions(page: Page, *, allow_type: bool = True, can_write: bool = False) -> dict[str, str]:
+def available_actions(
+    page: Page, *, allow_type: bool = True, can_write: bool = False, supplied_text: bool = False, supplied_url: bool = False
+) -> dict[str, str]:
     """Only offer actions the page can actually carry out.
 
     This is the one place the browser backend can beat the original's design:
@@ -89,20 +91,27 @@ def available_actions(page: Page, *, allow_type: bool = True, can_write: bool = 
     Offering `type_text` on a page with no input guarantees a stall, and a
     stalled step reads as model doubt even though the model was never at fault.
 
-    Typed text and a URL to open are free text, and free text only comes from the
-    writer. With no writer (`can_write` false) neither action is offered.
+    Typed text and a URL to open come from the operator, exactly as supplied, or from
+    a writer when one is attached and the operator supplied neither. Without one of
+    those, neither action is offered.
     """
     actions: dict[str, str] = {}
     if page.items:
         actions["click"] = BROWSER_ACTIONS["click"]
     # An action the caller cannot execute is a guaranteed stall, and the model will
     # pick it at low confidence, which then reads as doubt.
-    if allow_type and page.has_field and can_write:
-        actions["type_text"] = BROWSER_ACTIONS["type_text"]
+    if allow_type and page.has_field and (can_write or supplied_text):
+        actions["type_text"] = (
+            "Type the operator's exact text, given as text_to_type, into the field. Do not change it."
+            if supplied_text
+            else BROWSER_ACTIONS["type_text"]
+        )
     if page.has_field:
         actions["press_enter"] = BROWSER_ACTIONS["press_enter"]
-    if can_write:
-        actions["navigate"] = BROWSER_ACTIONS["navigate"]
+    if can_write or supplied_url:
+        actions["navigate"] = (
+            "Open the operator's https URL, given as url_to_open, in this tab." if supplied_url else BROWSER_ACTIONS["navigate"]
+        )
     actions["press_escape"] = BROWSER_ACTIONS["press_escape"]
     if page.can_scroll:
         actions["scroll_down"] = BROWSER_ACTIONS["scroll_down"]
@@ -121,8 +130,10 @@ def base_state(
     history: list[str],
     *,
     url_catalog: dict[str, str] | None,
+    text: str | None = None,
+    open_url: str | None = None,
 ) -> dict:
-    return {
+    state = {
         "goal": goal,
         "page": {"url": page.url, "title": page.title, "viewport": f"{page.vw}x{page.vh}"},
         "previous_actions": history[-8:],
@@ -143,10 +154,15 @@ def base_state(
         "page_text": [tb.text for tb in page.text] or None,
         "known_sites": url_catalog or None,
     }
+    if text is not None:
+        state["text_to_type"] = text
+    if open_url is not None:
+        state["url_to_open"] = open_url
+    return state
 
 
 def decide(
-    client: TypeSafeClient,
+    client: Classifier,
     goal: str,
     page: Page,
     history: list[str],
@@ -155,8 +171,17 @@ def decide(
     allow_type: bool = True,
     can_write: bool = False,
     model: str | None = None,
+    image: Any | None = None,
+    supplied_text: str | None = None,
+    open_url: str | None = None,
 ) -> Decision:
-    actions = available_actions(page, allow_type=allow_type, can_write=can_write)
+    actions = available_actions(
+        page,
+        allow_type=allow_type,
+        can_write=can_write,
+        supplied_text=supplied_text is not None,
+        supplied_url=open_url is not None,
+    )
 
     questions: dict[str, Any] = {
         "kind": Choice(
@@ -181,8 +206,8 @@ def decide(
             criteria=element_criteria(page),
         )
 
-    state = base_state(goal, page, history, url_catalog=url_catalog)
-    response = client.system_one(state=state, questions=questions, model=model)
+    state = base_state(goal, page, history, url_catalog=url_catalog, text=supplied_text, open_url=open_url)
+    response = client.system_one(state=state, questions=questions, model=model, image=image)
     answers = response.answers
 
     element = answers.get("element")
@@ -194,11 +219,12 @@ def decide(
         state=state,
         questions=dict(questions),
         answers=serialize_answers(response.answers),
+        request_id=getattr(response, "request_id", None),
     )
 
 
 def verify_typed(
-    client: TypeSafeClient, goal: str, element_label: str, typed: str, value_now: str | None, *, model: str | None = None
+    client: Classifier, goal: str, element_label: str, typed: str, value_now: str | None, *, model: str | None = None
 ) -> float:
     """Probability the field now holds a sensible value. Same guard as the original."""
     state = {
