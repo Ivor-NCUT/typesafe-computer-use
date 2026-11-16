@@ -108,14 +108,16 @@ def test_type_text_not_offered_without_a_field():
     assert "click" in actions
 
 
-def test_free_text_actions_need_a_writer():
-    """Typed text and an address to open only come from the writer, so without one neither
-    action is offered: an action the caller cannot execute is a guaranteed stall."""
+def test_free_text_actions_need_supplied_text_or_a_writer():
+    """Without supplied text or a writer, neither action is offered: an action the caller
+    cannot execute is a guaranteed stall."""
     page = perceive(StubSession([page_dict(items=[element_dict()], fields=1)]))
     without = available_actions(page, can_write=False)
     assert "type_text" not in without and "navigate" not in without
     with_writer = available_actions(page, can_write=True)
     assert "type_text" in with_writer and "navigate" in with_writer
+    supplied = available_actions(page, supplied_text=True, supplied_url=True)
+    assert "text_to_type" in supplied["type_text"] and "url_to_open" in supplied["navigate"]
 
 
 def test_scroll_and_back_are_offered_only_when_they_can_do_something():

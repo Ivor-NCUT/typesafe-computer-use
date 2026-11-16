@@ -39,13 +39,14 @@ class WriterError(Exception):
 
 
 def make_writer() -> Writer | None:
-    """A client, or None when there is nothing to write with.
+    """A client, or None when the operator did not configure a writer.
 
-    A key only ever goes to the endpoint it belongs to. CLICKER_WRITER_BASE_URL (see
-    config.writer_base_url) is paired with CLICKER_WRITER_API_KEY, or with a placeholder when that
-    is unset, since an endpoint you host yourself checks no key. Otherwise the SDK reads the
-    ANTHROPIC_* key, token, and base URL as it always does. An endpoint that speaks OpenAI's API
-    (CLICKER_WRITER_API=openai) has no default to fall back on, so it must be named.
+    `clicker` does not call this. Nothing here runs unless a writer base URL or an
+    Anthropic key is set. Constructing the Anthropic client with no key also loads a
+    profile from disk and can send a request, so that constructor is not called unless
+    a key is present. A key only ever goes to the endpoint it belongs to.
+    CLICKER_WRITER_BASE_URL is paired with CLICKER_WRITER_API_KEY, or with a placeholder
+    when that is unset. An OpenAI-compatible endpoint has no default, so it must be named.
     """
     base_url = writer_base_url()
     key = os.environ.get("CLICKER_WRITER_API_KEY") or PLACEHOLDER_KEY
@@ -57,10 +58,9 @@ def make_writer() -> Writer | None:
         # Proxies differ in which header they read, so the key goes in both. Passing any key at all
         # also keeps the SDK from adding ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN on its own.
         return anthropic.Anthropic(base_url=base_url, api_key=key, auth_token=key)
-    client = anthropic.Anthropic()
-    if client.api_key or client.auth_token:
-        return client
-    return None
+    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+        return None
+    return anthropic.Anthropic()
 
 
 def provider(writer: Writer) -> str:

@@ -14,8 +14,8 @@ from .perception import capture, perceive
 from .platform_adapter import desktop
 from .report import annotate, ax_count, render_payload
 from .runner import RunConfig, run
+from .supplied import SuppliedError, supplied_text, supplied_url
 from .timing import format_timing
-from .writer import make_writer, provider
 
 DOTENV = Path.cwd() / ".env"
 
@@ -26,17 +26,6 @@ def _prepare() -> None:
         sys.exit("PERPLEXITY_API_KEY is not set (export it or put it in .env)")
 
 
-def ask_user(question: str) -> str:
-    """Read the user's reply to a question the run has just printed. An empty reply declines to answer.
-
-    The bell is for a user who is watching the browser, not this terminal.
-    """
-    try:
-        return input("\a  > ")
-    except EOFError:
-        return ""
-
-
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="clicker",
@@ -44,6 +33,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("goal", help="what you want done on this computer")
     parser.add_argument("--act", action="store_true", help="actually click and type (default: dry run, one step)")
+    parser.add_argument("--text", help="exact text to type when the decision is type_text; typed unchanged")
+    parser.add_argument("--text-file", type=Path, help="file whose exact UTF-8 contents are typed, including a trailing newline")
+    parser.add_argument("--submit", action="store_true", help="press Return after the supplied text")
+    parser.add_argument("--open-url", help="exact https URL to open when the decision is a site outside the catalog")
     parser.add_argument("--steps", type=int, default=config.DEFAULT_STEPS, help="max actions before stopping")
     parser.add_argument("--min-confidence", type=float, default=config.DEFAULT_MIN_CONFIDENCE, help="stop below this confidence")
     parser.add_argument("--delay", type=float, default=config.DEFAULT_DELAY, help="seconds to wait after each action")
@@ -51,7 +44,7 @@ def main(argv: list[str] | None = None) -> None:
         "--handoffs",
         type=int,
         default=config.DEFAULT_HANDOFFS,
-        help="times the writer may send a stopped run back to the classifier with a new focus (0: every stop is final)",
+        help="kept for compatibility; clicker never calls an answer model, so every stop is final",
     )
     parser.add_argument("--out", type=Path, default=Path("runs") / time.strftime("%Y%m%d-%H%M%S"), help="run folder")
     parser.add_argument("--image", type=Path, help="replay a saved capture instead of the live screen (never acts)")
@@ -63,16 +56,20 @@ def main(argv: list[str] | None = None) -> None:
     if args.act and not desktop.accessibility_trusted():
         sys.exit("this terminal lacks Accessibility permission; grant it in System Settings > Privacy & Security")
     try:
-        writer = make_writer()
-        config.writer_vision()  # a bad value stops the run here, not at its first stop
-    except ValueError as e:
+        text = supplied_text(args.text, args.text_file)
+        open_url = supplied_url(args.open_url)
+    except SuppliedError as e:
         sys.exit(str(e))
-    if writer is None:
-        print(
-            "writer disabled: no ANTHROPIC_API_KEY or CLICKER_WRITER_BASE_URL; type_text, writer-proposed URLs and the final answer need one"
-        )
+    if args.submit and text is None:
+        sys.exit("--submit needs --text, --text-file, CLICKER_TEXT, or CLICKER_TEXT_FILE")
+    if text is None:
+        print("no text supplied: type_text is not offered (pass --text or --text-file)")
     else:
-        print(f"writer: {provider(writer)}")
+        print(f"text supplied ({len(text)} characters)" + (", then Return" if args.submit else ""))
+    if open_url is None:
+        print("no URL supplied: a site outside the catalog cannot be opened")
+    else:
+        print("open URL supplied")
 
     cfg = RunConfig(
         goal=args.goal,
@@ -93,9 +90,12 @@ def main(argv: list[str] | None = None) -> None:
             browser=config.browser(),
             email=config.email(),
             decider=decider,
-            writer=writer,
+            writer=None,
             history=history,
-            ask=ask_user if sys.stdin.isatty() else None,
+            ask=None,
+            text=text,
+            submit=args.submit,
+            open_url=open_url,
         )
 
     state = run(cfg, ctx_factory)

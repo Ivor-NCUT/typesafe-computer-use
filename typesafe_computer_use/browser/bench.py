@@ -27,7 +27,7 @@ from pathlib import Path
 
 from .. import config
 from ..decider import PerplexityDecider
-from ..writer import make_writer, provider
+from ..supplied import SuppliedError, supplied_text, supplied_url
 from . import act
 from .cdp import Chrome
 from .decide import decide
@@ -176,13 +176,18 @@ def benchmark_loop(args: argparse.Namespace) -> int:
 
     _require_key()
     try:
-        writer = make_writer()
-    except ValueError as e:
+        text = supplied_text(args.text, args.text_file)
+        open_url = supplied_url(args.open_url)
+    except SuppliedError as e:
         sys.exit(str(e))
-    if writer is None:
-        print("writer disabled: no ANTHROPIC_API_KEY or CLICKER_WRITER_BASE_URL; type_text and navigate need one")
+    if text is None:
+        print("no text supplied: type_text is not offered (pass --text or --text-file)")
     else:
-        print(f"writer: {provider(writer)}")
+        print(f"text supplied ({len(text)} characters)")
+    if open_url is None:
+        print("no URL supplied: navigate is not offered")
+    else:
+        print("open URL supplied")
 
     runfolder = RunFolder.create(args.runs) if args.runs else None
     if runfolder is not None:
@@ -200,8 +205,10 @@ def benchmark_loop(args: argparse.Namespace) -> int:
             max_steps=args.steps,
             min_confidence=args.min_confidence,
             model=args.model,
-            writer=writer,
+            writer=None,
             runfolder=runfolder,
+            text=text,
+            open_url=open_url,
         )
 
     s = result.summary()
@@ -319,6 +326,9 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--steps", type=int, default=10)
     q.add_argument("--min-confidence", type=float, default=0.4)
     q.add_argument("--model", default=None)
+    q.add_argument("--text", default=None, help="exact text for type_text")
+    q.add_argument("--text-file", type=Path, default=None, help="UTF-8 file typed exactly")
+    q.add_argument("--open-url", default=None, help="exact https URL for navigate")
     q.add_argument("--headed", action="store_true")
     q.add_argument("--out", default=None)
     q.add_argument("--runs", default=None, help="write a replayable run folder under this directory")

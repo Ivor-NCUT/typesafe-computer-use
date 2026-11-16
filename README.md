@@ -69,13 +69,14 @@ cp .env.example .env     # fill in the keys
 |---|---|---|
 | `PERPLEXITY_API_KEY` | yes | every decision (`Authorization: Bearer`) |
 | `PERPLEXITY_DECIDER_MODEL` | no | defaults to `pplx-decider-latest` |
-| `ANTHROPIC_API_KEY` | no | `type_text`, writer-proposed URLs, and the final answer |
+| `CLICKER_TEXT` | no | exact text for `type_text`; `--text` and `--text-file` override it |
+| `CLICKER_OPEN_URL` | no | exact https URL when the decision opens a site outside the catalog |
 | `CLICKER_EMAIL` | no | enables the `type_email` action |
 | `CLICKER_BROWSER` | no | defaults to `Google Chrome` |
 
 `.env` lives at the repo root and is read by every entry point (`clicker`, `clicker-inspect`).
-To run the writer on another model or endpoint (LM Studio, Ollama, any OpenAI-compatible
-server), see [writer endpoints](docs/writer-endpoints.md).
+`clicker` does not call a writing or answer model. Text to type and an address to open
+are the ones you pass. `ANTHROPIC_API_KEY` and `CLICKER_WRITER_*` are not read by `clicker`.
 
 Grant your terminal **Screen Recording** and **Accessibility** in System Settings >
 Privacy & Security. Without the first, captures are wallpaper. Without the second,
@@ -86,16 +87,17 @@ synthetic clicks are silently dropped, and `--act` refuses to start.
 ```
 uv run clicker "open the Playground"                 # dry run: one step, prints what it would do
 uv run clicker "open the Playground" --act           # drives the machine, up to 100 steps
-uv run clicker "log in" --act --steps 20 --delay 3   # longer and slower
-uv run clicker "log in" --act --handoffs 0           # the classifier alone: its first stop ends the run
+uv run clicker "search" --text "quarterly report" --submit --act
+uv run clicker "open the venue" --open-url "https://example.com/venue" --act
+uv run clicker "paste the note" --text-file ./note.txt --act
 uv run clicker-inspect "any goal"                    # 3-2-1, capture, open the annotated screen + payload
 ```
 
 Clear the terminal first. It is on screen, so its text is OCR input.
 
 To stop a live run, press Ctrl-C in the terminal or slam the mouse into the top-left corner of
-the screen. The loop also stops itself on `done`, low confidence, a stall, or the step limit,
-and the writer then reads the screen and prints the answer. Every run writes
+the screen. The loop also stops itself on `done`, low confidence, a stall, or the step limit.
+A stop ends the run. No model is asked to read the screen or write an answer. Every run writes
 `runs/<timestamp>/`, so a stall can be [replayed offline](docs/run-folder.md).
 
 ## How a step works
@@ -107,8 +109,9 @@ and the writer then reads the screen and prints the answer. Every run writes
 3. One Decisions API request answers three `choice` questions — which kind of action, which item, which site — and includes the screenshot.
 4. The action runs deterministically, the loop waits, and the next capture is the only witness
    of what it did.
-5. When the classifier stops, the writer reads the screen and answers, or hands the run back
-   with a focus (one move) or a question for you. It never picks an action.
+5. When the classifier stops, the run stops. It does not call another model. `type_text`
+   types `--text` or `--text-file` exactly, and `--open-url` is the address for a site
+   outside the catalog. Nothing rewrites that text.
 
 The full walk, with the OCR cost, the tree walk, the action space, and the stop rules, is in
 [how a step works](docs/how-a-step-works.md).
@@ -126,7 +129,7 @@ a one-command machine in Google Cloud.
 - [How a step works](docs/how-a-step-works.md): perception, the three-part decision, the action space, stalls, and the hand-off to the writer
 - [Run folder](docs/run-folder.md): what every run writes, the timing line, and offline replay
 - [Browser backend](docs/browser-backend.md): DOM perception over Chrome DevTools, no OCR, no screen permission
-- [Writer endpoints](docs/writer-endpoints.md): every writer variable, and other models over the Anthropic or OpenAI API
+- [Writer endpoints](docs/writer-endpoints.md): not used by `clicker`; the optional OSWorld comparison writer
 - [Windows](docs/windows.md): the experimental adapter and how it differs from macOS
 - [OSWorld](docs/osworld.md): setup, the two run commands, results, and the Google Cloud machine
 - [Layout](docs/layout.md): every module and what it owns

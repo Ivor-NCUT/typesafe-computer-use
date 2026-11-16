@@ -199,8 +199,49 @@ def test_use_browser_asks_the_writer_for_a_site_outside_the_catalog(screen, brow
 
 def test_use_browser_without_a_writer_refuses_a_site_outside_the_catalog(screen, browser):
     refusal = actions.perform(browsing("other"), screen, [], context())
-    assert refusal == "use_browser refused: the site is outside the catalog and no writer is available to propose a URL"
+    assert refusal == "use_browser refused: the site is outside the catalog and no URL was supplied"
     assert browser == []
+
+
+def test_a_supplied_url_is_opened_exactly_without_a_writer(screen, browser, monkeypatch):
+    monkeypatch.setattr(actions, "compose_url", lambda *a: pytest.fail("writer"))
+    ctx = replace(context(), open_url="https://www.songkick.com/exact")
+    assert actions.perform(browsing("other"), screen, [], ctx) == "opened https://www.songkick.com/exact"
+    assert browser == [("open", "Google Chrome", "https://www.songkick.com/exact")]
+
+
+def test_a_supplied_url_that_is_not_https_is_refused(screen, browser):
+    ctx = replace(context(), open_url="http://example.com/page")
+    refusal = actions.perform(browsing("other"), screen, [], ctx)
+    assert refusal == "use_browser refused: the supplied address is not an https URL"
+    assert browser == []
+
+
+def test_supplied_text_is_typed_unchanged_and_the_writer_is_not_asked(screen, calls, monkeypatch):
+    monkeypatch.setattr(actions, "compose_text", lambda *a: pytest.fail("writer"))
+    monkeypatch.setattr(actions, "verify_typed", lambda *a: pytest.fail("verify"))
+    ctx = replace(context(), text="  hello\n")
+    result = actions.perform(SimpleNamespace(chosen="type_text"), replace(screen, field=field()), [], ctx)
+    assert result == "typed '  hello\\n' into 'Email' via keystrokes"
+    assert calls == [("clear",), ("type", "  hello\n")]
+
+
+def test_supplied_text_can_be_submitted_with_return(screen, calls, monkeypatch):
+    monkeypatch.setattr(desktop, "press", lambda key, command=False: calls.append(("press", key)))
+    monkeypatch.setattr(actions, "compose_text", lambda *a: pytest.fail("writer"))
+    monkeypatch.setattr(actions, "verify_typed", lambda *a: pytest.fail("verify"))
+    ctx = replace(context(), text="Favorites", submit=True)
+    result = actions.perform(SimpleNamespace(chosen="type_text"), replace(screen, field=field()), [], ctx)
+    assert result == "typed 'Favorites' into 'Email' via keystrokes and pressed Return"
+    assert ("press", "return") in calls
+
+
+def test_supplied_text_is_not_typed_into_a_credential_field(screen, calls, monkeypatch):
+    monkeypatch.setattr(actions, "compose_text", lambda *a: pytest.fail("writer"))
+    focused = replace(screen, field=replace(field(), label="Password"))
+    result = actions.perform(SimpleNamespace(chosen="type_text"), focused, [], replace(context(), text="hunter2"))
+    assert result == "type_text refused: a credential field is not filled"
+    assert calls == []
 
 
 def test_use_browser_refuses_when_the_writer_proposes_nothing(screen, browser, monkeypatch):

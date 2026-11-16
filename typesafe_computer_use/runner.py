@@ -170,7 +170,7 @@ def hand_off(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     if stopped is None:
         return False
     if ctx.writer is None:
-        log("\nno answer: the writer is disabled (set ANTHROPIC_API_KEY or CLICKER_WRITER_BASE_URL)")
+        log("\nstopped. no writer is attached, so nothing is asked to read the screen or compose an answer")
         return False
     if state.handoffs and state.handoffs[-1].actions == len(state.history) and state.answer is not None:
         log(f"\nanswer ({verdict(state.answer)}; the focus led to no action, so the last answer stands):\n  {state.answer.text}")
@@ -294,12 +294,39 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     tried = tried_here(state)
     prefix = cfg.out / f"step-{step:03d}"  # three digits, so a run of 100 steps still lists in order
     screen.image.save(prefix.with_name(prefix.name + "-raw.png"))
+    can_type = ctx.text is not None or ctx.writer is not None
     prefix.with_name(prefix.name + "-payload.txt").write_text(
-        render_payload(cfg.goal, screen, items, state.history, ctx.browser, ctx.email, tried, ctx.guidance), encoding="utf-8"
+        render_payload(
+            cfg.goal,
+            screen,
+            items,
+            state.history,
+            ctx.browser,
+            ctx.email,
+            tried,
+            ctx.guidance,
+            text=ctx.text,
+            open_url=ctx.open_url,
+            can_type=can_type,
+        ),
+        encoding="utf-8",
     )
 
     with phase(timing, "decide"):
-        decision = decide(ctx.decider, cfg.goal, screen, items, state.history, ctx.browser, ctx.email, tried, ctx.guidance)
+        decision = decide(
+            ctx.decider,
+            cfg.goal,
+            screen,
+            items,
+            state.history,
+            ctx.browser,
+            ctx.email,
+            tried,
+            ctx.guidance,
+            can_type=can_type,
+            supplied_text=ctx.text,
+            open_url=ctx.open_url,
+        )
     by_index = {str(it.index): it for it in items}
     annotate(screen, items, decision.chosen, prefix.with_suffix(".png"))
 

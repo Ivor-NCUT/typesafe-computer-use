@@ -15,6 +15,7 @@ typesafe_computer_use/
   dates.py        date parsing and "in N days" hints
   decider.py      Perplexity Decisions API client, screenshot resize, choice and noul answers
   decide.py       state, criteria, the three-choice request, the noul check
+  supplied.py     the operator's exact text and URL; nothing is generated here
   writer.py       the writer model, structured replies, URL validation, the answer
                   with its focus or question
   openai_writer.py the writer's requests on an OpenAI-compatible endpoint

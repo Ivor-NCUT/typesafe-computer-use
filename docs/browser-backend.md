@@ -49,7 +49,7 @@ Page.captureScreenshot ─► viewport PNG, resized under 2048 tiles, sent as st
 ```
 
 The action set is filtered to what the page can actually do: no `type_text` without a field
-and a writer, no `navigate` without a writer, no `scroll_down` when the document does not scroll, no `back` with
+and supplied text, no `navigate` without a supplied https URL, no `scroll_down` when the document does not scroll, no `back` with
 empty history. An option the loop cannot execute is a guaranteed stall, and it reads as
 model doubt when the model was never at fault.
 
@@ -65,11 +65,11 @@ alone counts as a page change.
 
 ## Where browser free text comes from
 
-The writer, as in [how a step works](how-a-step-works.md#where-free-text-comes-from): `compose_browser_text` for a field and `compose_url` for an address,
-each with a structured reply. There is no other source, so with no writer the loop does not
-offer `type_text` or `navigate`. Every step records where its text came from (`writer`,
-`writer_declined`, `writer_error(...)`, `refused_credential`, `no_writer`) in the step line
-and the run folder.
+Text to type and an address to open are the operator's, passed in and used unchanged
+(`--text`, `--text-file`, `--open-url`). With neither, the loop does not offer `type_text`
+or `navigate`. `clicker-bench` does not call a writer. Every step records where its text
+came from (`supplied`, `supplied_refused`, `refused_credential`, `no_writer`) in the step
+line and the run folder.
 
 Perception never reads what is in a field: an input's value is not collected, and no element
 is named after it, so a password does not reach the text state, the criteria, the writer, or

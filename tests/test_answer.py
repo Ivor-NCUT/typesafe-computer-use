@@ -157,7 +157,7 @@ def test_without_a_writer_the_run_says_why_there_is_no_answer(tmp_path, screen):
     hand_off(RunConfig(goal=GOAL, out=tmp_path), context(), state, 1, log)
 
     assert state.answer is None
-    assert "no answer" in lines[0] and "ANTHROPIC_API_KEY" in lines[0]
+    assert "no writer is attached" in lines[0]
 
 
 def test_the_last_capture_is_answered_from_when_nothing_acted_after_it(tmp_path, screen, make_item, monkeypatch):

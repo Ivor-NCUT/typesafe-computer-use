@@ -11,8 +11,9 @@ so a stall can be replayed offline with `--image`.
 - The classifier picks; code decides facts. Anything the model would have to
   compute (dates, URL validity, whether a field is focused) is computed in code
   and handed over as state.
-- Free text only ever comes from `writer.py`, with a structured reply and a
-  code-side guard.
+- Free text that `clicker` types is the operator's, passed in and used unchanged.
+  `clicker` does not call a writer. A writer, where one is still attached for the
+  OSWorld comparison, is optional and stays off when it is not configured.
 - The writer never picks an action. When the classifier stops it may name a focus
   or ask the user, and the classifier takes every step from there. Watch the
   `calls:` line: a change that moves work to the writer should say why.

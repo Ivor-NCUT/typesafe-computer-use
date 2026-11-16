@@ -45,6 +45,10 @@ def render_payload(
     email: str | None,
     tried: list[str] | None = None,
     guidance: Guidance | None = None,
+    *,
+    text: str | None = None,
+    open_url: str | None = None,
+    can_type: bool = True,
 ) -> str:
     """The facts and criteria for this screen, plus a table of every item.
 
@@ -55,12 +59,12 @@ def render_payload(
         RULE,
         "STATE  (sent as `state`, with the capture as state.screenshot; image omitted here)",
         RULE,
-        json.dumps(base_state(goal, screen, items, history, tried, guidance), indent=2),
+        json.dumps(base_state(goal, screen, items, history, tried, guidance, text=text, open_url=open_url), indent=2),
         "",
         RULE,
         "QUESTION kind  (Choice criteria)",
         RULE,
-        json.dumps(kind_criteria(browser, email, bool(screen.offscreen)), indent=2),
+        json.dumps(kind_criteria(browser, email, bool(screen.offscreen), can_type=can_type, supplied=text is not None), indent=2),
         "",
         RULE,
         "QUESTION item  (Choice criteria)",

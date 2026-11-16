@@ -25,7 +25,7 @@ from pathlib import Path
 from PIL import Image
 
 from ..decider import Classifier
-from ..writer import Writer, compose_browser_text, compose_url, looks_credential
+from ..writer import Writer, compose_browser_text, compose_url, looks_credential, valid_url
 from . import act
 from .cdp import CDPError
 from .decide import Decision, available_actions, decide, field_context, verify_typed
@@ -106,12 +106,22 @@ def typing_target(page: Page, chosen: int | None) -> tuple[Element | None, str]:
     return target, ""
 
 
-def resolve_text(writer: Writer | None, goal: str, page: Page, target: Element, history: list[str]) -> tuple[str, str]:
-    """Free text for a field, and where it came from. Only the writer composes it.
+def resolve_text(
+    writer: Writer | None,
+    goal: str,
+    page: Page,
+    target: Element,
+    history: list[str],
+    *,
+    supplied: str | None = None,
+) -> tuple[str, str]:
+    """Free text for a field, and where it came from.
 
-    The provenance is recorded per step, so a run folder shows whether the writer
-    filled the field, declined, or failed.
+    The operator's text is used unchanged. A writer is asked only when no text was
+    supplied and one is attached. The provenance is recorded per step.
     """
+    if supplied is not None:
+        return supplied, "supplied"
     if writer is None:
         return "", "no_writer"
     try:
@@ -129,9 +139,14 @@ def resolve_text(writer: Writer | None, goal: str, page: Page, target: Element, 
     return (composed, "writer") if composed else ("", "writer_declined")
 
 
-def resolve_url(writer: Writer | None, goal: str, history: list[str]) -> tuple[str, str]:
-    """The address to open for this goal, and where it came from. Only the writer proposes one,
-    and `compose_url` returns only a valid https URL."""
+def resolve_url(writer: Writer | None, goal: str, history: list[str], *, supplied: str | None = None) -> tuple[str, str]:
+    """The address to open, and where it came from.
+
+    The operator's address is used unchanged when it is an https URL. A writer is
+    asked only when no address was supplied and one is attached.
+    """
+    if supplied is not None:
+        return (supplied, "supplied") if valid_url(supplied) else ("", "supplied_refused")
     if writer is None:
         return "", "no_writer"
     try:
@@ -174,6 +189,8 @@ def run_goal(
     model: str | None = None,
     writer: Writer | None = None,
     runfolder: RunFolder | None = None,
+    text: str | None = None,
+    open_url: str | None = None,
 ) -> RunResult:
     result = RunResult(goal=goal, url=str(session.evaluate("location.href") or ""), outcome="incomplete")
     if start_url:
@@ -197,9 +214,11 @@ def run_goal(
             page, perceive_ms = pending, 0.0
             pending = None
 
-        # Typing and opening an address need free text, which only the writer composes.
+        # Typing and opening an address use the operator's exact text, or a writer when one is attached.
         can_write = writer is not None
-        action_criteria = available_actions(page, allow_type=allow_type, can_write=can_write)
+        action_criteria = available_actions(
+            page, allow_type=allow_type, can_write=can_write, supplied_text=text is not None, supplied_url=open_url is not None
+        )
         element_criteria_map = {str(e.index): e.label() for e in page.items}
 
         t0 = time.perf_counter()
@@ -213,6 +232,8 @@ def run_goal(
             can_write=can_write,
             model=model,
             image=image,
+            supplied_text=text,
+            open_url=open_url,
         )
         decide_ms = (time.perf_counter() - t0) * 1000
 
@@ -252,25 +273,29 @@ def run_goal(
             else:
                 detail = act.click(session, int(element.index), element, page)
         elif kind == "type_text":
-            # The classifier picked the action and the field; the writer supplies the
-            # text. The field is checked before the writer is asked, so a credential
-            # field is refused whatever the text would have been.
+            # The classifier picked the action and the field. The operator's text is typed
+            # unchanged. A credential field is refused before any text is used.
             target, refusal = typing_target(page, decision.chosen_element)
-            text, text_source = ("", refusal) if target is None else resolve_text(writer, goal, page, target, history)
-            if target is None or not text:
+            typed, text_source = (
+                ("", refusal) if target is None else resolve_text(writer, goal, page, target, history, supplied=text)
+            )
+            if target is None or (text_source != "supplied" and not typed):
                 detail = f"type -> {text_source}"
                 noops += 1
                 touched = False
+            elif text_source == "supplied":
+                act.type_text(session, int(target.index), typed)
+                detail = f"type {typed!r} -> supplied"
             else:
-                act.type_text(session, int(target.index), text)
+                act.type_text(session, int(target.index), typed)
                 value_now = act.field_value(session, int(target.index))
-                ok = verify_typed(client, goal, target.label(), text, value_now, model=model)
+                ok = verify_typed(client, goal, target.label(), typed, value_now, model=model)
                 if ok < 0.5:
                     act.clear_field(session, int(target.index))
-                    detail = f"type {text!r} -> verify {ok:.2f}, cleared"
+                    detail = f"type {typed!r} -> verify {ok:.2f}, cleared"
                     noops += 1
                 else:
-                    detail = f"type {text!r} -> verify {ok:.2f}"
+                    detail = f"type {typed!r} -> verify {ok:.2f}"
         elif kind == "press_enter":
             detail = act.press(session, "enter")
         elif kind == "press_escape":
@@ -282,7 +307,7 @@ def run_goal(
         elif kind == "back":
             detail = act.go_back(session)
         elif kind == "navigate":
-            target_url, text_source = resolve_url(writer, goal, history)
+            target_url, text_source = resolve_url(writer, goal, history, supplied=open_url)
             if target_url:
                 detail = act.navigate(session, target_url)
             else:

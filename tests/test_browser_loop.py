@@ -202,7 +202,7 @@ class FakeWriter:
         return SimpleNamespace(content=[block])
 
 
-def run(browser, client, tmp_path: Path, writer=None, steps: int = 3):
+def run(browser, client, tmp_path: Path, writer=None, steps: int = 3, text=None, open_url=None):
     folder = RunFolder.create(tmp_path)
     result = run_goal(
         browser,
@@ -213,6 +213,8 @@ def run(browser, client, tmp_path: Path, writer=None, steps: int = 3):
         verbose=False,
         writer=writer,
         runfolder=folder,
+        text=text,
+        open_url=open_url,
     )
     return result, folder
 
@@ -304,6 +306,32 @@ def test_a_field_labelled_like_a_credential_is_refused_even_when_not_a_password_
     page["items"][0] = item(0, "One-time code", role="text")
     target, why = typing_target(perceive(FakeBrowser(page)), 0)
     assert target is None and why == "refused_credential"
+
+
+def test_supplied_text_is_typed_exactly_and_not_checked_by_a_writer(tmp_path):
+    browser = FakeBrowser(login_page(), values={0: "  hello\n"})
+    client = FakeTypeSafe(("type_text", "0"))
+    result, _ = run(browser, client, tmp_path, text="  hello\n", steps=1)
+    assert browser.typed == ["  hello\n"]
+    assert result.steps[0].text_source == "supplied"
+    assert "text_to_type" in client.requests[0]["questions"]["kind"].criteria["type_text"]
+    assert client.requests[0]["state"]["text_to_type"] == "  hello\n"
+
+
+def test_a_supplied_url_is_opened_exactly(tmp_path):
+    browser = FakeBrowser(login_page())
+    client = FakeTypeSafe(("navigate", None))
+    result, _ = run(browser, client, tmp_path, open_url="https://example.test/exact", steps=1)
+    assert browser.navigations == ["https://example.test/exact"]
+    assert result.steps[0].text_source == "supplied"
+
+
+def test_a_supplied_url_that_is_not_https_is_not_opened(tmp_path):
+    browser = FakeBrowser(login_page())
+    client = FakeTypeSafe(("navigate", None))
+    result, _ = run(browser, client, tmp_path, open_url="http://example.test/", steps=1)
+    assert browser.navigations == []
+    assert result.steps[0].text_source == "supplied_refused"
 
 
 def test_the_writer_types_into_an_ordinary_field_and_the_step_says_so(tmp_path):
