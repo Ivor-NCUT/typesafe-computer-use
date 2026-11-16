@@ -20,10 +20,10 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 from PIL import Image
-from typesafe_sdk import Noul
 
 from typesafe_computer_use import actions, runner
 from typesafe_computer_use.actions import Context
+from typesafe_computer_use.decider import Noul
 from typesafe_computer_use.models import AxNode, Field, Item, Popup, Screen
 from typesafe_computer_use.platform_adapter import desktop
 from typesafe_computer_use.runner import RunConfig, RunState, run
@@ -393,7 +393,7 @@ class FakeTypeSafe:
     def __exit__(self, *exc: object) -> bool:
         return False
 
-    def system_one(self, state: dict, questions: dict) -> SimpleNamespace:
+    def system_one(self, state: dict, questions: dict, image=None, model=None) -> SimpleNamespace:
         if any(isinstance(q, Noul) for q in questions.values()):
             return SimpleNamespace(answers={name: SimpleNamespace(noul=self.noul) for name in questions})
         self.states.append(state)
@@ -519,7 +519,7 @@ def drive(
     world.install(monkeypatch)
     fake = FakeTypeSafe(policy, noul)
     world.fake = fake
-    monkeypatch.setattr(runner, "TypeSafeClient", lambda: fake)
+    monkeypatch.setattr(runner, "PerplexityDecider", lambda: fake)
     cfg = RunConfig(goal=goal, out=tmp_path / "run", act=True, steps=steps, delay=0)
     if handoffs is not None:
         cfg.handoffs = handoffs
@@ -532,11 +532,11 @@ def drive(
 
     return run(
         cfg,
-        lambda typesafe, history: Context(
+        lambda decider, history: Context(
             goal=goal,
             browser="Google Chrome",
             email=email,
-            typesafe=typesafe,
+            decider=decider,
             writer=client,
             history=history,
             ask=ask if replies is not None else None,

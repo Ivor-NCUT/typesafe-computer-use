@@ -46,10 +46,14 @@ def render_payload(
     tried: list[str] | None = None,
     guidance: Guidance | None = None,
 ) -> str:
-    """Exactly what goes to TypeSafe for this screen, plus a table of every item."""
+    """The facts and criteria for this screen, plus a table of every item.
+
+    The capture is also sent as `state.screenshot` (a PNG data URL, resized under
+    2048 tiles) and is left out of this text. The raw.png beside it is that capture.
+    """
     parts = [
         RULE,
-        "STATE  (sent as `state`)",
+        "STATE  (sent as `state`, with the capture as state.screenshot; image omitted here)",
         RULE,
         json.dumps(base_state(goal, screen, items, history, tried, guidance), indent=2),
         "",

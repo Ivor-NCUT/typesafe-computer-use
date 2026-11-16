@@ -220,12 +220,12 @@ class _Run:
             message = message if isinstance(message, _Failed) else _Failed(error)
         self.to_predict.put(message)
 
-    def _context(self, typesafe, history: list[str]) -> Context:
+    def _context(self, decider, history: list[str]) -> Context:
         return Context(
             goal=self.cfg.goal,
             browser=BROWSER,
             email=self.agent.email,
-            typesafe=_Watching(typesafe, self._decided),
+            decider=_Watching(decider, self._decided),
             writer=self.agent.writer,
             history=history,
             ask=None,

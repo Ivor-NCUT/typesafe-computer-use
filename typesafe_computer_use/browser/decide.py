@@ -1,4 +1,4 @@
-"""The TypeSafe side of the browser backend: one request, three questions.
+"""The decision side of the browser backend: one request, three questions.
 
 Same discipline as the original — split the decision so screen noise cannot leak
 into the action choice — but the option sets are browser-only, so they are
@@ -11,8 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from typesafe_sdk import Choice, ChoiceAnswer, Noul, NoulAnswer, ScoreAnswer, TypeSafeClient
-
+from ..decider import Choice, ChoiceAnswer, Classifier, Noul, NoulAnswer, ScoreAnswer
 from .perceive import Page
 
 STOP_KINDS = ("done", "none")
@@ -52,6 +51,7 @@ class Decision:
     state: dict = field(default_factory=dict)
     questions: dict = field(default_factory=dict)
     answers: dict = field(default_factory=dict)
+    request_id: str | None = None
 
     @property
     def clicking(self) -> bool:
@@ -146,7 +146,7 @@ def base_state(
 
 
 def decide(
-    client: TypeSafeClient,
+    client: Classifier,
     goal: str,
     page: Page,
     history: list[str],
@@ -155,6 +155,7 @@ def decide(
     allow_type: bool = True,
     can_write: bool = False,
     model: str | None = None,
+    image: Any | None = None,
 ) -> Decision:
     actions = available_actions(page, allow_type=allow_type, can_write=can_write)
 
@@ -182,7 +183,7 @@ def decide(
         )
 
     state = base_state(goal, page, history, url_catalog=url_catalog)
-    response = client.system_one(state=state, questions=questions, model=model)
+    response = client.system_one(state=state, questions=questions, model=model, image=image)
     answers = response.answers
 
     element = answers.get("element")
@@ -194,11 +195,12 @@ def decide(
         state=state,
         questions=dict(questions),
         answers=serialize_answers(response.answers),
+        request_id=getattr(response, "request_id", None),
     )
 
 
 def verify_typed(
-    client: TypeSafeClient, goal: str, element_label: str, typed: str, value_now: str | None, *, model: str | None = None
+    client: Classifier, goal: str, element_label: str, typed: str, value_now: str | None, *, model: str | None = None
 ) -> float:
     """Probability the field now holds a sensible value. Same guard as the original."""
     state = {

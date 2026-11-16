@@ -154,8 +154,9 @@ def test_the_item_question_steers_around_what_was_tried_here_as_the_kind_questio
     kind question was told to steer around that list, and the item question chose Bing every time."""
     asked = []
 
-    def system_one(state, questions):
+    def system_one(state, questions, image=None):
         asked.append(questions)
+        assert image is screen.image
         return SimpleNamespace(answers={"kind": answer("click_item", 0.9), "item": answer("1", 0.9), "site": answer("none", 1.0)})
 
     items = [make_item(0, "Microsoft Bing"), make_item(1, "Set as default", y1=200, y2=230)]

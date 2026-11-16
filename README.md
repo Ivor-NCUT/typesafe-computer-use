@@ -7,14 +7,14 @@
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white">
   <img alt="macOS, Windows experimental" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20(experimental)-000000">
-  <a href="https://docs.typesafe.ai"><img alt="TypeSafe" src="https://img.shields.io/badge/decisions-TypeSafe%20jev-8b5cf6"></a>
+  <a href="https://docs.perplexity.ai/docs/decisions/quickstart"><img alt="Perplexity Decisions" src="https://img.shields.io/badge/decisions-Perplexity%20Decisions%20API-20808d"></a>
   <a href="https://github.com/astral-sh/ruff"><img alt="Ruff" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json"></a>
 </p>
 
-**typesafe-computer-use** (jev for short) drives a Mac toward a goal you type in plain English,
-for about a fiftieth of a cent per step. It reads the screen deterministically, asks a small
-classifier which action comes next, and only calls a writing model when a text field genuinely
-needs free text or the classifier has stopped and the screen needs reading.
+**typesafe-computer-use** (jev for short) drives a Mac toward a goal you type in plain English.
+It reads the screen deterministically, asks Perplexity's Decisions API which action comes
+next, and only calls a writing model when a text field genuinely needs free text or the
+decision model has stopped and the screen needs reading.
 
 One idea runs through it: the classifier picks, code decides facts, and the writer only writes
 free text. Anything a model would have to work out (a date, whether a field is focused, whether
@@ -35,26 +35,23 @@ Frontier-model computer use is capable and expensive: every step ships a screens
 waits several seconds for a plan. Most steps do not need a plan. They need one choice
 from a short list, made quickly and cheaply, with a confidence number you can gate on.
 
-[TypeSafe](https://docs.typesafe.ai) sells exactly that: a decision model that answers
-a `Choice` over up to 255 options with a full probability distribution and a calibrated
-confidence, in a few hundred milliseconds, with free output tokens. This project is a
-computer-use loop built around it.
+[Perplexity's Decisions API](https://docs.perplexity.ai/docs/decisions/quickstart) is that
+model. It answers a `choice` over up to 255 options with a probability for each option
+and a confidence, or a `noul` yes/no with the probability of yes. It does not write
+text, generate code, or explain itself. This loop still decides the facts and executes
+the action. The default model is `pplx-decider-latest` ($0.02 per million input tokens,
+output tokens free). Set `PERPLEXITY_DECIDER_MODEL` to `pplx-decider-flash-latest` for
+the smaller model. The API reads images, so each decision sends the screenshot as a PNG
+data URL next to the OCR text, accessibility labels, and the other facts code computed.
 
-Measured on the same screenshot and goal, one decision each:
+A frontier model can read a date off the pixels and compare it unaided. This loop still
+computes dates, rows, focus, and the actions already tried on this screen in code, and
+hands them over as state, as described in [how a step works](docs/how-a-step-works.md).
+The screenshot is there so the model can also see what the text missed.
 
-| | typesafe (jev) | Claude Opus 5, bare screenshot | multiplier |
-|---|---|---|---|
-| input tokens | 4,882 | 4,785 | same |
-| cost per decision | $0.0002 | $0.032 | 155x cheaper |
-| cost per decision, realistic loop with history | $0.0002 | $0.035 to $0.08 | 170x to 390x cheaper |
-| cost per 12-step task | $0.003 | $0.40 to $0.90 | 130x to 300x cheaper |
-| model latency | 0.13 to 0.38 s | 5.2 s | 14x to 40x faster |
-| end-to-end step, with capture and OCR | about 1.5 s | about 5.5 s | 3.7x faster |
-
-The honest caveat: the big model read the event dates off the pixels and compared them
-unaided. The classifier needed the date parsing described in
-[how a step works](docs/how-a-step-works.md). Every piece of reasoning the frontier model
-does for free has to be rebuilt here as deterministic state.
+This project began as Aaron Levin's
+[typesafe-computer-use](https://github.com/awlevin/typesafe-computer-use) (MIT). The
+computer-use loop is that project. The decision model here is Perplexity's.
 
 ## Install
 
@@ -70,7 +67,8 @@ cp .env.example .env     # fill in the keys
 
 | variable | required | purpose |
 |---|---|---|
-| `TYPESAFE_API_KEY` | yes | every decision |
+| `PERPLEXITY_API_KEY` | yes | every decision (`Authorization: Bearer`) |
+| `PERPLEXITY_DECIDER_MODEL` | no | defaults to `pplx-decider-latest` |
 | `ANTHROPIC_API_KEY` | no | `type_text`, writer-proposed URLs, and the final answer |
 | `CLICKER_EMAIL` | no | enables the `type_email` action |
 | `CLICKER_BROWSER` | no | defaults to `Google Chrome` |
@@ -106,7 +104,7 @@ and the writer then reads the screen and prints the answer. Every run writes
    labelled controls from the accessibility tree, which sees the icons OCR cannot.
 2. Code adds the facts: the date on any block and how far off it is, the row of a repeated
    label, the focused field, the app and URL, and the actions already tried on this screen.
-3. One TypeSafe request answers three `Choice`s: which kind of action, which item, which site.
+3. One Decisions API request answers three `choice` questions — which kind of action, which item, which site — and includes the screenshot.
 4. The action runs deterministically, the loop waits, and the next capture is the only witness
    of what it did.
 5. When the classifier stops, the writer reads the screen and answers, or hands the run back
@@ -144,4 +142,4 @@ The ground rules, and how to write a scenario for a task the loop cannot do, are
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Copyright 2026 Aaron Levin. This fork keeps that license and that attribution.

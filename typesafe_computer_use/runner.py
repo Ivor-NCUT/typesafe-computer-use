@@ -7,12 +7,11 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
-from typesafe_sdk import TypeSafeClient
-
 from .actions import Context, perform
 from .calls import Calls, MeteredClassifier, MeteredWriter
 from .config import DEFAULT_DELAY, DEFAULT_HANDOFFS, DEFAULT_MIN_CONFIDENCE, DEFAULT_STEPS, MAX_OPTIONS
 from .decide import Decision, decide, offscreen_records
+from .decider import PerplexityDecider
 from .models import Abort, Guidance, Item, Screen, Signature, same_screen, signature
 from .perception import OcrCache, capture, perceive
 from .platform_adapter import desktop
@@ -97,7 +96,7 @@ class RunState:
 
 
 def run(cfg: RunConfig, ctx_factory) -> RunState:
-    """Drive the loop. ctx_factory(typesafe, history) builds the action Context."""
+    """Drive the loop. ctx_factory(decider, history) builds the action Context."""
     cfg.out.mkdir(parents=True, exist_ok=True)
     log = Log(cfg.out / "run.log")
     log(f"run folder: {cfg.out}")
@@ -107,8 +106,8 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
     state = RunState()
     started = time.time()
     try:
-        with TypeSafeClient() as typesafe:
-            ctx = metered(ctx_factory(typesafe, state.history), state.calls)
+        with PerplexityDecider() as decider:
+            ctx = metered(ctx_factory(decider, state.history), state.calls)
             for step in range(1, cfg.steps + 1):
                 if run_step(cfg, ctx, state, step, log):
                     continue
@@ -149,7 +148,7 @@ def metered(ctx: Context, calls: Calls) -> Context:
     """The same context, with every request to either model counted."""
     return replace(
         ctx,
-        typesafe=MeteredClassifier(ctx.typesafe, calls),
+        decider=MeteredClassifier(ctx.decider, calls),
         writer=MeteredWriter(ctx.writer, calls) if ctx.writer is not None else None,
     )
 
@@ -300,7 +299,7 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     )
 
     with phase(timing, "decide"):
-        decision = decide(ctx.typesafe, cfg.goal, screen, items, state.history, ctx.browser, ctx.email, tried, ctx.guidance)
+        decision = decide(ctx.decider, cfg.goal, screen, items, state.history, ctx.browser, ctx.email, tried, ctx.guidance)
     by_index = {str(it.index): it for it in items}
     annotate(screen, items, decision.chosen, prefix.with_suffix(".png"))
 
@@ -308,7 +307,7 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     log(
         f"\nstep {step}: app={screen.app!r}{field_desc} url={screen.url!r} items={len(items)} ax={ax_count(items)} "
         f"offscreen={len(screen.offscreen)} kind={decision.kind.choice} ({decision.kind.confidence:.2f}) "
-        f"site={decision.site.choice}"
+        f"site={decision.site.choice}" + (f" req={decision.request_id}" if decision.request_id else "")
     )
     for key, p in top(decision.kind, 4):
         log(f"  {p:5.2f}  {key}")

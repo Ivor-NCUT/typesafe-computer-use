@@ -1,4 +1,4 @@
-"""Browser backend: DOM-driven computer use, no pixels, no OCR."""
+"""Browser backend: DOM-driven computer use, no OCR. The decision also gets a viewport screenshot."""
 
 from .cdp import CDPError, Chrome, Session, find_chrome, free_port
 from .decide import BROWSER_ACTIONS, Decision, decide

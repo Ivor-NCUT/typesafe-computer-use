@@ -1,14 +1,19 @@
-"""The TypeSafe side: state, criteria, and the one multi-Choice request."""
+"""State, criteria, and the one multi-question decision request.
+
+The questions are still split — kind, item, site, and off-screen when there is
+any — so screen noise cannot leak into the action. The client is Perplexity's
+Decisions API (`decider.py`): each question is a `choice`, and the screenshot
+goes out with the facts.
+"""
 
 from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
 
-from typesafe_sdk import Choice, ChoiceAnswer, Noul, TypeSafeClient
-
 from .config import SITES
 from .dates import date_hints, now_context
+from .decider import Choice, ChoiceAnswer, Classifier, Noul
 from .models import AxNode, Field, Guidance, Item, Screen
 
 STOP_KINDS = ("done", "none")
@@ -168,6 +173,7 @@ class Decision:
     item: ChoiceAnswer | None
     site: ChoiceAnswer
     offscreen: ChoiceAnswer | None = None
+    request_id: str | None = None
 
     @property
     def clicking(self) -> bool:
@@ -203,7 +209,7 @@ class Decision:
 
 
 def decide(
-    client: TypeSafeClient,
+    client: Classifier,
     goal: str,
     screen: Screen,
     items: list[Item],
@@ -252,11 +258,22 @@ def decide(
             ),
             criteria=offscreen_criteria(screen.offscreen),
         )
-    answers = client.system_one(state=base_state(goal, screen, items, history, tried, guidance), questions=questions).answers
-    return Decision(kind=answers["kind"], item=answers.get("item"), site=answers["site"], offscreen=answers.get("offscreen"))
+    response = client.system_one(
+        state=base_state(goal, screen, items, history, tried, guidance),
+        questions=questions,
+        image=screen.image,
+    )
+    answers = response.answers
+    return Decision(
+        kind=answers["kind"],
+        item=answers.get("item"),
+        site=answers["site"],
+        offscreen=answers.get("offscreen"),
+        request_id=getattr(response, "request_id", None),
+    )
 
 
-def verify_typed(client: TypeSafeClient, goal: str, field_before: Field, typed: str, field_after: Field | None) -> float:
+def verify_typed(client: Classifier, goal: str, field_before: Field, typed: str, field_after: Field | None) -> float:
     """Probability that the field now holds a sensible value for its purpose."""
     state = {
         "goal": goal,

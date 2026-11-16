@@ -1,12 +1,13 @@
 # Browser backend: DOM perception, no OCR
 
 `macos.py` drives whatever is on screen. For the browser there is a second backend that
-never looks at pixels: it reads the DOM over the Chrome DevTools Protocol, so it needs no
-Screen Recording permission and cannot fight you for the cursor. It is opt-in: `clicker`
-never uses it. `clicker-bench` starts its own Chrome on a fresh, temporary profile (never
-yours), whose debugging socket listens on the loopback address and accepts one origin, and
-removes the profile when it closes. It reads `TYPESAFE_API_KEY` and the writer's settings
-the way `clicker` does, from the environment or `./.env`.
+reads elements from the DOM over the Chrome DevTools Protocol, so it needs no Screen
+Recording permission and cannot fight you for the cursor. It is opt-in: `clicker` never
+uses it. `clicker-bench` starts its own Chrome on a fresh, temporary profile (never yours),
+whose debugging socket listens on the loopback address and accepts one origin, and removes
+the profile when it closes. It reads `PERPLEXITY_API_KEY` and the writer's settings the way
+`clicker` does, from the environment or `./.env`. The decision also receives a viewport
+screenshot, as a PNG data URL, when Chrome can capture one.
 
 ```
 uv run clicker-bench loop --fixture --runs runs         # end-to-end step loop
@@ -14,8 +15,8 @@ uv run clicker-bench perception --url https://news.ycombinator.com
 uv run clicker-bench replay --run runs/<ts> --step 2    # re-decide a saved step offline
 ```
 
-Perception, same page, same machine, same moment, one decision each. The TypeSafe call is
-identical in both paths, so the difference is purely how the screen is read:
+Perception, same page, same machine, same moment, one decision each. The Decisions API call
+is the same kind of request in both paths, so the difference below is how the screen is read:
 
 | page | DOM (browser backend) | screencapture + Vision OCR | ratio |
 | --- | --- | --- | --- |
@@ -30,16 +31,19 @@ verbatim across those pages — under 10% on real sites. A classifier choosing b
 blocks is choosing between garbled strings; a classifier choosing between DOM elements is
 choosing between the page's actual labels.
 
-End-to-end loop, p50: **302-380 ms per step** (2.6-3.5 steps/sec), of which ~280-350 ms is
-the TypeSafe decision. Perception is now ~0% of a step.
+The decision is one Decisions API request, and it is most of a step. Perception of the
+element list stays a small part of it. A viewport screenshot is attached to that request
+when capture succeeds.
 
 ```
 Runtime.evaluate ─► ordered element list (text, role, click point, on-screen, covered)
                    + visible page text (prices, dates, errors; evidence only)
+Page.captureScreenshot ─► viewport PNG, resized under 2048 tiles, sent as state.screenshot
                      │
-        ONE TypeSafe request, two Choices
-        kind    : click | type_text | navigate | press_enter | scroll_down | ... | done
-        element : which on-screen element (used only when kind is click)
+        ONE Decisions API request
+        kind      : click | type_text | navigate | press_enter | scroll_down | ... | done
+        element   : which on-screen element (used only when kind is click)
+        satisfied : noul, is the goal already achieved
                      │
         real Input events ─► observe-until-changed ─► next step
 ```
@@ -68,19 +72,21 @@ offer `type_text` or `navigate`. Every step records where its text came from (`w
 and the run folder.
 
 Perception never reads what is in a field: an input's value is not collected, and no element
-is named after it, so a password on the page cannot reach the classifier, the writer, or the
-disk. Password inputs and fields whose `autocomplete` asks for a credential or card data are
-marked, and the loop refuses to type into them, or into any field labelled like one, before
-the writer is asked.
+is named after it, so a password does not reach the text state, the criteria, the writer, or
+the logs. The viewport screenshot sent with the decision is the painted page. A password
+input is masked there. Password inputs and fields whose `autocomplete` asks for a credential
+or card data are marked, and the loop refuses to type into them, or into any field labelled
+like one, before the writer is asked.
 
 ## Browser run folder and replay
 
-`runs/<timestamp>/` in the same shape as the [desktop run folder](run-folder.md), with `step-NN-elements.json` as the replayable
-artefact, since a browser step has no pixels to re-capture:
+`runs/<timestamp>/` in the same shape as the [desktop run folder](run-folder.md). `step-NN-elements.json`
+is what replay rebuilds the page from. `step-NN-raw.png` is the viewport that went with the decision,
+when Chrome captured one:
 
 ```
 run.log, run.json
-step-NN-payload.txt   the exact `state` and every Choice criteria sent
+step-NN-payload.txt   the facts and every choice criteria sent (the screenshot is step-NN-raw.png)
 step-NN-state.json    the state, for comparison on replay
 step-NN-answers.json  every probability returned
 step-NN-elements.json everything perception returned, for offline replay

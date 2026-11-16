@@ -4,7 +4,7 @@ Stage accounting is deliberate and literal:
 
 * `perceive_ms` — cost of producing the element list for this step's decision.
   Zero when the previous action already handed us a fresh observation.
-* `decide_ms` — the TypeSafe call.
+* `decide_ms` — the Decisions API call, including the viewport screenshot when one is available.
 * `act_ms` — the input event, the post-type verification call if any, **and** the
   observation-until-changed that waits for the action to land.
 
@@ -15,15 +15,19 @@ trip, and no fixed sleep.
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from typesafe_sdk import TypeSafeClient
+from PIL import Image
 
+from ..decider import Classifier
 from ..writer import Writer, compose_browser_text, compose_url, looks_credential
 from . import act
+from .cdp import CDPError
 from .decide import Decision, available_actions, decide, field_context, verify_typed
 from .perceive import Element, Page, perceive
 from .report import RunFolder, render_payload
@@ -137,9 +141,28 @@ def resolve_url(writer: Writer | None, goal: str, history: list[str]) -> tuple[s
     return (url, "writer") if url else ("", "writer_declined")
 
 
+def page_image(session) -> Image.Image | None:
+    """The viewport, for the decision model. None when this session cannot capture one.
+
+    Element perception stays the DOM. The screenshot is extra state for the model,
+    which reads pixels as well as the element list. A failure here does not stop the step.
+    """
+    try:
+        result = session.call("Page.captureScreenshot", {"format": "png"})
+    except CDPError:
+        return None
+    data = result.get("data") if isinstance(result, dict) else None
+    if not isinstance(data, str) or not data:
+        return None
+    try:
+        return Image.open(io.BytesIO(base64.b64decode(data))).convert("RGB")
+    except (OSError, ValueError):
+        return None
+
+
 def run_goal(
     session,
-    client: TypeSafeClient,
+    client: Classifier,
     goal: str,
     *,
     start_url: str | None = None,
@@ -180,6 +203,7 @@ def run_goal(
         element_criteria_map = {str(e.index): e.label() for e in page.items}
 
         t0 = time.perf_counter()
+        image = page_image(session)
         decision: Decision = decide(
             client,
             goal,
@@ -188,9 +212,12 @@ def run_goal(
             allow_type=allow_type,
             can_write=can_write,
             model=model,
+            image=image,
         )
         decide_ms = (time.perf_counter() - t0) * 1000
 
+        if runfolder is not None and image is not None:
+            image.save(runfolder.root / f"step-{n:02d}-raw.png")
         if runfolder is not None:
             runfolder.step_payload(
                 n,

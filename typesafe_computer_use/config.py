@@ -7,7 +7,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 MIN_OCR_CONFIDENCE = 0.3
-MAX_OPTIONS = 255  # TypeSafe Choice ceiling
+MAX_OPTIONS = 255  # Decisions API choice ceiling
+DEFAULT_DECIDER_MODEL = "pplx-decider-latest"
 ABORT_CORNER_PX = 4
 DEFAULT_MIN_CONFIDENCE = 0.4
 DEFAULT_STEPS = 100
@@ -50,6 +51,11 @@ def browser() -> str:
 
 def writer_model() -> str:
     return os.environ.get("CLICKER_WRITER_MODEL", DEFAULT_WRITER_MODEL)
+
+
+def decider_model() -> str:
+    """The Decisions API model. `PERPLEXITY_DECIDER_MODEL` overrides `pplx-decider-latest`."""
+    return os.environ.get("PERPLEXITY_DECIDER_MODEL", "").strip() or DEFAULT_DECIDER_MODEL
 
 
 def writer_api() -> str:

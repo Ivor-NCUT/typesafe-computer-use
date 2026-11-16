@@ -22,8 +22,8 @@ DOTENV = Path.cwd() / ".env"
 
 def _prepare() -> None:
     config.load_dotenv(DOTENV)
-    if not os.environ.get("TYPESAFE_API_KEY"):
-        sys.exit("TYPESAFE_API_KEY is not set (export it or put it in .env)")
+    if not os.environ.get("PERPLEXITY_API_KEY"):
+        sys.exit("PERPLEXITY_API_KEY is not set (export it or put it in .env)")
 
 
 def ask_user(question: str) -> str:
@@ -40,7 +40,7 @@ def ask_user(question: str) -> str:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="clicker",
-        description="Drive this computer toward a goal: screen OCR, a TypeSafe classifier, deterministic actions.",
+        description="Drive this computer toward a goal: screen OCR, a Perplexity decision model, deterministic actions.",
     )
     parser.add_argument("goal", help="what you want done on this computer")
     parser.add_argument("--act", action="store_true", help="actually click and type (default: dry run, one step)")
@@ -87,12 +87,12 @@ def main(argv: list[str] | None = None) -> None:
         url=args.url,
     )
 
-    def ctx_factory(typesafe, history):
+    def ctx_factory(decider, history):
         return Context(
             goal=args.goal,
             browser=config.browser(),
             email=config.email(),
-            typesafe=typesafe,
+            decider=decider,
             writer=writer,
             history=history,
             ask=ask_user if sys.stdin.isatty() else None,
@@ -106,7 +106,7 @@ def main(argv: list[str] | None = None) -> None:
 def inspect(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="clicker-inspect",
-        description="Count down, capture the screen, and show exactly what the clicker would send to TypeSafe.",
+        description="Count down, capture the screen, and show the facts and criteria the clicker would send.",
     )
     parser.add_argument("goal", nargs="?", default="(no goal given)")
     parser.add_argument("--countdown", type=int, default=3)

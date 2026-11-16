@@ -1,10 +1,11 @@
 """Browser run folder: the same replayability contract as the original, minus pixels.
 
-The original replays a stall from `step-NN-raw.png`. A browser step has no pixels
-to replay, so the captured artefact is the element list itself. Everything else
-matches: the run log, the exact payload sent to TypeSafe, and every probability
-that came back. `load_step` reads a folder back so a decision can be re-run
-offline without touching a browser at all.
+The original replays a stall from `step-NN-raw.png`. A browser step's replayable
+artefact is still the element list. The viewport screenshot, when the browser
+captured one, is `step-NN-raw.png` and is sent again on replay. Everything else
+matches: the run log, the facts and criteria sent to the Decisions API, and every
+probability that came back. `load_step` reads a folder back so a decision can be
+re-run offline without touching a browser at all.
 """
 
 from __future__ import annotations
@@ -102,10 +103,14 @@ def render_payload(
     actions: dict[str, str],
     elements: dict[str, str],
 ) -> str:
-    """Exactly what goes to TypeSafe this step, plus the element list it was built from."""
+    """The facts and criteria for this step, plus the element list they were built from.
+
+    A viewport screenshot, when the browser captured one, is sent as `state.screenshot`
+    and is not in the JSON below. `step-NN-raw.png` is that image.
+    """
     parts = [
         RULE,
-        "STATE  (sent as `state`)",
+        "STATE  (sent as `state`; a viewport screenshot is attached as state.screenshot when captured)",
         RULE,
         json.dumps(state, indent=2, default=str),
         "",

@@ -31,7 +31,7 @@ class FakeWriter:
 
 
 def context(writer=None) -> Context:
-    return Context(goal=GOAL, browser="Google Chrome", email=None, typesafe=None, writer=writer, history=[])
+    return Context(goal=GOAL, browser="Google Chrome", email=None, decider=None, writer=writer, history=[])
 
 
 def logged() -> tuple[list[str], runner.Log]:
